@@ -20,11 +20,7 @@ app = FastAPI(title="Agent Memory Server", version="0.1.0", lifespan=lifespan)
 # Allow the memory-ui (and any localhost/127.0.0.1 dev origin) to call the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5055",
-        "http://127.0.0.1:5055",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
