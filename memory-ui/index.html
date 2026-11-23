@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Memory Server UI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --border:   #2a2d3e;
+    --accent:   #6c63ff;
+    --accent2:  #00c9a7;
+    --accent3:  #ff6584;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --success:  #22c55e;
+    --danger:   #ef4444;
+    --warn:     #f59e0b;
+    --radius:   12px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── TOP BAR ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-size: 1.1rem; font-weight: 700; letter-spacing: .3px; }
+  .logo span { color: var(--accent); }
+
+  .server-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .server-row input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 8px; font-size: .82rem; width: 240px;
+  }
+  .server-row input:focus { outline: none; border-color: var(--accent); }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: .78rem; padding: 4px 10px;
+    border-radius: 20px; background: var(--bg); border: 1px solid var(--border);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.up   { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .dot.down { background: var(--danger);  box-shadow: 0 0 6px var(--danger);  }
+
+  .token-wrap { position: relative; }
+  .token-wrap input { padding-right: 36px; }
+  .token-wrap button {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: .9rem;
+  }
+
+  /* ── LAYOUT ── */
+  .main { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 57px); }
+
+  /* ── SIDEBAR ── */
+  aside {
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 16px 0; display: flex; flex-direction: column; gap: 2px;
+  }
+  .aside-label {
+    font-size: .68rem; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--muted); padding: 10px 16px 4px;
+  }
+  .proj-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; cursor: pointer; border-radius: 0;
+    font-size: .88rem; border-left: 3px solid transparent;
+    transition: background .15s, border-color .15s;
+  }
+  .proj-item:hover { background: rgba(108,99,255,.08); }
+  .proj-item.active { background: rgba(108,99,255,.14); border-left-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .proj-icon { font-size: 1rem; }
+  .proj-badge {
+    margin-left: auto; background: var(--border);
+    font-size: .68rem; padding: 1px 7px; border-radius: 10px; color: var(--muted);
+  }
+  .proj-loading { padding: 20px 16px; color: var(--muted); font-size: .82rem; }
+
+  /* ── CONTENT ── */
+  .content { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; }
+
+  /* ── CARDS ── */
+  .row { display: grid; gap: 16px; }
+  .row-3 { grid-template-columns: repeat(3, 1fr); }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+  .row-1 { grid-template-columns: 1fr; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+  }
+  .card-title {
+    font-size: .78rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .8px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+  }
+  .stat-value { font-size: 2rem; font-weight: 700; line-height: 1; }
+  .stat-sub { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+
+  .chart-wrap { position: relative; height: 220px; }
+
+  /* ── SEARCH ── */
+  .search-box {
+    display: flex; gap: 10px; align-items: center;
+  }
+  .search-box input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 14px; border-radius: 8px; font-size: .9rem;
+  }
+  .search-box input:focus { outline: none; border-color: var(--accent); }
+  .search-box select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 10px; border-radius: 8px; font-size: .88rem; cursor: pointer;
+  }
+  .btn {
+    background: var(--accent); color: #fff; border: none;
+    padding: 10px 18px; border-radius: 8px; font-size: .88rem;
+    cursor: pointer; font-weight: 600; transition: opacity .15s;
+  }
+  .btn:hover { opacity: .85; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn-sm { padding: 6px 12px; font-size: .78rem; }
+  .btn-ghost {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+  }
+
+  .search-results { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .result-card {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; cursor: pointer; transition: border-color .15s;
+  }
+  .result-card:hover { border-color: var(--accent); }
+  .result-meta {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
+  }
+  .result-path { font-size: .78rem; color: var(--accent); font-family: monospace; }
+  .result-score {
+    font-size: .72rem; color: var(--muted); background: var(--surface);
+    padding: 2px 7px; border-radius: 10px;
+  }
+  .result-text { font-size: .84rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+  /* ── FILE TREE ── */
+  .file-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+  .file-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; font-size: .82rem; color: var(--muted);
+    cursor: default; transition: background .1s;
+  }
+  .file-row:hover { background: rgba(255,255,255,.04); color: var(--text); }
+  .file-row span.name { font-family: monospace; flex: 1; }
+  .file-row span.sz { font-size: .72rem; color: var(--muted); }
+  .file-row span.ver { font-size: .68rem; color: var(--border); }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 8px; font-size: .84rem;
+    opacity: 0; pointer-events: none; transition: opacity .3s;
+    max-width: 320px;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ── EMPTY / ERROR ── */
+  .empty { color: var(--muted); font-size: .84rem; padding: 20px 0; text-align: center; }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 860px) {
+    .main { grid-template-columns: 1fr; }
+    aside { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
+    .row-3, .row-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header>
+  <div class="logo">memory <span>ui</span></div>
+  <div class="server-row">
+    <input id="serverUrl" value="http://localhost:8080" placeholder="Memory server URL" />
+    <div class="token-wrap">
+      <input id="tokenInput" type="password" placeholder="Bearer token" />
+      <button onclick="toggleToken()" title="Show/hide">👁</button>
+    </div>
+    <button class="btn btn-sm" onclick="connect()">Connect</button>
+    <div class="status-pill">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">disconnected</span>
+    </div>
+  </div>
+</header>
+
+<!-- LAYOUT -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="aside-label">Projects</div>
+    <div class="proj-loading" id="projList">— not connected —</div>
+  </aside>
+
+  <!-- CONTENT -->
+  <div class="content" id="content">
+
+    <!-- STATS ROW -->
+    <div class="row row-3">
+      <div class="card">
+        <div class="card-title">📂 Projects</div>
+        <div class="stat-value" id="statProjects">—</div>
+        <div class="stat-sub">total accessible</div>
+      </div>
+      <div class="card">
+        <div class="card-title">📄 Files</div>
+        <div class="stat-value" id="statFiles">—</div>
+        <div class="stat-sub" id="statFilesSub">in selected project</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🔍 Chunks Indexed</div>
+        <div class="stat-value" id="statChunks">—</div>
+        <div class="stat-sub">searchable chunks</div>
+      </div>
+    </div>
+
+    <!-- CHARTS ROW -->
+    <div class="row row-2">
+      <div class="card">
+        <div class="card-title">📊 File Count per Project</div>
+        <div class="chart-wrap"><canvas id="chartProjects"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📁 File Types in Project</div>
+        <div class="chart-wrap"><canvas id="chartTypes"></canvas></div>
+      </div>
+    </div>
+
+    <!-- FILE SIZE CHART -->
+    <div class="card">
+      <div class="card-title">📏 File Sizes (bytes) — top 20</div>
+      <div class="chart-wrap" style="height:200px"><canvas id="chartSizes"></canvas></div>
+    </div>
+
+    <!-- SEARCH -->
+    <div class="card">
+      <div class="card-title">🔍 Search</div>
+      <div class="search-box">
+        <input id="searchQuery" placeholder="Search memory..." onkeydown="if(event.key==='Enter')doSearch()" />
+        <select id="searchProject"></select>
+        <select id="searchLimit">
+          <option value="5">5</option>
+          <option value="8" selected>8</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+        </select>
+        <button class="btn" id="searchBtn" onclick="doSearch()" disabled>Search</button>
+      </div>
+      <div id="searchResults" class="search-results"></div>
+    </div>
+
+    <!-- FILE LIST -->
+    <div class="card">
+      <div class="card-title">
+        📂 Files in <span id="fileListProject" style="color:var(--accent)">—</span>
+        <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="loadFiles()">Refresh</button>
+      </div>
+      <div class="file-list" id="fileList"><div class="empty">Select a project</div></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────────────────────
+let API = 'http://localhost:8080';
+let TOKEN = '';
+let projects = [];
+let activeProject = null;
+let charts = {};
+
+// ── UTILS ──────────────────────────────────────────────────────────────────
+function toast(msg, color = 'var(--accent)') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = color;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function headers() {
+  return { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { headers: headers(), ...opts });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+function toggleToken() {
+  const inp = document.getElementById('tokenInput');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function setStatus(up) {
+  const dot = document.getElementById('dot');
+  const txt = document.getElementById('statusText');
+  dot.className = 'dot ' + (up ? 'up' : 'down');
+  txt.textContent = up ? 'connected' : 'disconnected';
+}
+
+function mkChart(id, type, data, opts = {}) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type,
+    data,
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+      scales: type === 'bar' ? {
+        x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#2a2d3e' } },
+        y: { ticks: { color: '#64748b' }, grid: { color: '#2a2d3e' } },
+      } : {},
+      ...opts,
+    }
+  });
+}
+
+// ── CONNECT ────────────────────────────────────────────────────────────────
+async function connect() {
+  API   = document.getElementById('serverUrl').value.replace(/\/$/, '');
+  TOKEN = document.getElementById('tokenInput').value.trim();
+  try {
+    await fetch(API + '/health');
+    const data = await api('/projects');
+    projects = data.projects || [];
+    setStatus(true);
+    toast('Connected ✓', 'var(--success)');
+    renderSidebar();
+    renderStats();
+    document.getElementById('searchBtn').disabled = false;
+    document.getElementById('searchProject').disabled = false;
+    renderProjectChart();
+  } catch (e) {
+    setStatus(false);
+    toast('Cannot reach server: ' + e.message, 'var(--danger)');
+  }
+}
+
+// ── SIDEBAR ────────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const el = document.getElementById('projList');
+  if (!projects.length) { el.innerHTML = '<div class="proj-loading">No projects</div>'; return; }
+  el.innerHTML = '';
+
+  const sel = document.getElementById('searchProject');
+  sel.innerHTML = '';
+  projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p; sel.appendChild(opt);
+  });
+
+  projects.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'proj-item' + (activeProject === p ? ' active' : '');
+    div.innerHTML = `<span class="proj-icon">📁</span><span>${p}</span><span class="proj-badge" id="badge-${p}">…</span>`;
+    div.onclick = () => selectProject(p);
+    el.appendChild(div);
+  });
+
+  // Load file counts for badges
+  projects.forEach(async p => {
+    try {
+      const d = await api(`/projects/${p}/tree`);
+      const badge = document.getElementById('badge-' + p);
+      if (badge) badge.textContent = (d || []).length;
+    } catch {}
+  });
+}
+
+async function selectProject(p) {
+  activeProject = p;
+  document.querySelectorAll('.proj-item').forEach(el => {
+    el.classList.toggle('active', el.textContent.trim().startsWith(p));
+  });
+  document.getElementById('fileListProject').textContent = p;
+  document.getElementById('searchProject').value = p;
+  await Promise.all([loadFiles(), loadTypeChart()]);
+}
+
+// ── STATS ──────────────────────────────────────────────────────────────────
+function renderStats() {
+  document.getElementById('statProjects').textContent = projects.length;
+}
+
+// ── PROJECT BAR CHART ──────────────────────────────────────────────────────
+async function renderProjectChart() {
+  const counts = await Promise.all(
+    projects.map(async p => {
+      try { const d = await api(`/projects/${p}/tree`); return (d || []).length; }
+      catch { return 0; }
+    })
+  );
+
+  const colors = projects.map((_, i) =>
+    `hsl(${(i * 47 + 200) % 360}, 65%, 55%)`
+  );
+
+  mkChart('chartProjects', 'bar', {
+    labels: projects,
+    datasets: [{ label: 'Files', data: counts, backgroundColor: colors, borderRadius: 6 }]
+  });
+}
+
+// ── FILE LIST + SIZE CHART ─────────────────────────────────────────────────
+async function loadFiles() {
+  if (!activeProject) return;
+  const el = document.getElementById('fileList');
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const files = await api(`/projects/${activeProject}/tree`);
+    document.getElementById('statFiles').textContent = files.length;
+
+    if (!files.length) { el.innerHTML = '<div class="empty">No files</div>'; return; }
+
+    el.innerHTML = files.slice(0, 200).map(f => `
+      <div class="file-row">
+        <span>📄</span>
+        <span class="name">${f.path}</span>
+        <span class="sz">${f.size != null ? f.size.toLocaleString() + 'B' : '—'}</span>
+        <span class="ver">v${f.version}</span>
+      </div>`).join('');
+
+    // Size bar chart — top 20 non-zero
+    const sorted = [...files].filter(f => f.size).sort((a, b) => b.size - a.size).slice(0, 20);
+    mkChart('chartSizes', 'bar', {
+      labels: sorted.map(f => f.path.split('/').pop()),
+      datasets: [{ label: 'bytes', data: sorted.map(f => f.size), backgroundColor: '#6c63ff88', borderColor: '#6c63ff', borderWidth: 1, borderRadius: 4 }]
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ── FILE TYPE PIE CHART ────────────────────────────────────────────────────
+async function loadTypeChart() {
+  if (!activeProject) return;
+  try {
+    const files = await api(`/projects/${activeProject}/tree`);
+    const extMap = {};
+    files.forEach(f => {
+      const ext = f.path.includes('.') ? '.' + f.path.split('.').pop() : '(no ext)';
+      extMap[ext] = (extMap[ext] || 0) + 1;
+    });
+    const labels = Object.keys(extMap);
+    const data = Object.values(extMap);
+    const colors = labels.map((_, i) => `hsl(${(i * 53 + 160) % 360}, 60%, 55%)`);
+
+    mkChart('chartTypes', 'doughnut', {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderColor: 'var(--surface)', borderWidth: 2 }]
+    }, { cutout: '58%' });
+
+    // Update chunk stat via context
+    try {
+      const ctx = await api(`/projects/${activeProject}/context`);
+      document.getElementById('statChunks').textContent = '✓';
+    } catch {}
+  } catch {}
+}
+
+// ── SEARCH ─────────────────────────────────────────────────────────────────
+async function doSearch() {
+  const q = document.getElementById('searchQuery').value.trim();
+  const p = document.getElementById('searchProject').value;
+  const limit = parseInt(document.getElementById('searchLimit').value);
+  const el = document.getElementById('searchResults');
+  if (!q) { toast('Enter a query', 'var(--warn)'); return; }
+  if (!p) { toast('Select a project', 'var(--warn)'); return; }
+  el.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const data = await api(`/projects/${p}/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query: q, limit })
+    });
+    const results = data.results || [];
+    if (!results.length) { el.innerHTML = '<div class="empty">No results found.</div>'; return; }
+    el.innerHTML = results.map(r => `
+      <div class="result-card">
+        <div class="result-meta">
+          <span class="result-path">📄 ${r.path} <span style="color:var(--muted)">chunk ${r.chunk}</span></span>
+          <span class="result-score">score ${r.score} · ${r.mode}</span>
+        </div>
+        <div class="result-text">${escHtml(r.text)}</div>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">Search error: ${e.message}</div>`;
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── BOOT ───────────────────────────────────────────────────────────────────
+// Auto-connect if URL param present: ?url=...&token=...
+(function () {
+  const p = new URLSearchParams(location.search);
+  if (p.get('url'))   document.getElementById('serverUrl').value = p.get('url');
+  if (p.get('token')) document.getElementById('tokenInput').value = p.get('token');
+  if (p.get('url') && p.get('token')) connect();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# ── Runtime / OS ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ── PID file (created by server.py at runtime) ────────────────────
+memory-ui/.pid
+.pid
+
+# ── Virtual environments ──────────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+
+# ── Editor / IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log
+logs/
