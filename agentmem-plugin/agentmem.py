@@ -232,8 +232,10 @@ def finish_task(summary, decisions=None, facts=None, next_steps=None, update_con
     return {"project": p, "saved": saved}
 
 
-@tool("search_memory", "Semantic + keyword search over all project files and saved memory.",
-      {"query": ("string", "What to look for"), "limit": ("integer", "Max results (default 8)"),
+@tool("search_memory", "Vector-First hybrid (vector + keyword) search over all project files, PDFs, images, and notes. "
+      "ALWAYS search vector chunks first to retrieve precise citations and snippets before reading entire raw files, "
+      "saving 95%+ context tokens.",
+      {"query": ("string", "What to search for"), "limit": ("integer", "Max results (default 8)"),
        "project": PROJ}, ["query"])
 def search_memory(query, limit=8, project=None):
     p, _ = resolve_project(project)
@@ -250,24 +252,34 @@ def save_memory(type, text, project=None):
     return api("POST", f"/projects/{p}/memory", {"type": type, "text": text})
 
 
-@tool("read_file", "Read a text file from the project memory store (optionally at a git revision).",
+@tool("read_file", "Read a file from the project memory store (optionally at a git revision). Handles text, PDFs, images, binaries.",
       {"path": ("string", "Path inside the project, e.g. docs/design.md"),
-       "rev": ("string", "Optional git revision from file_history"), "project": PROJ}, ["path"])
-def read_file(path, rev=None, project=None):
+       "rev": ("string", "Optional git revision from file_history"),
+       "as_b64": ("boolean", "Set to true to force base64 output"),
+       "project": PROJ}, ["path"])
+def read_file(path, rev=None, as_b64=False, project=None):
     p, _ = resolve_project(project)
-    return api("GET", f"/projects/{p}/file", params={"path": path, "rev": rev})
+    params = {"path": path, "rev": rev}
+    if as_b64:
+        params["as_b64"] = "true"
+    return api("GET", f"/projects/{p}/file", params=params)
 
 
-@tool("write_file", "Create/overwrite/append a file in the project memory store (docs, notes, specs). "
+@tool("write_file", "Create/overwrite/append a file in the project memory store (docs, notes, specs, PDFs, images). "
+      "Pass content (text) or content_b64 (base64 string for binary/PDF/images). "
       "Pass expected_sha256 from read_file to avoid overwriting someone else's edit.",
-      {"path": ("string", "Path inside the project"), "content": ("string", "File content"),
+      {"path": ("string", "Path inside the project"),
+       "content": ("string", "File content (text string)"),
+       "content_b64": ("string", "Base64-encoded binary content (for PDFs, images, etc.)"),
        "append": ("boolean", "Append instead of overwrite"),
-       "expected_sha256": ("string", "sha256 from read_file"), "project": PROJ}, ["path", "content"])
-def write_file(path, content, append=False, expected_sha256=None, project=None):
+       "expected_sha256": ("string", "sha256 from read_file"), "project": PROJ}, ["path"])
+def write_file(path, content="", content_b64=None, append=False, expected_sha256=None, project=None):
     p, _ = resolve_project(project)
     ensure_project(p)
-    return api("PUT", f"/projects/{p}/file", {"path": path, "content": content, "append": append,
-                                               "expected_sha256": expected_sha256})
+    body = {"path": path, "content": content or "", "append": append, "expected_sha256": expected_sha256}
+    if content_b64 is not None:
+        body["content_b64"] = content_b64
+    return api("PUT", f"/projects/{p}/file", body)
 
 
 @tool("list_dir", "List a directory in the project memory store.",
@@ -313,9 +325,12 @@ def current_project(project=None):
 
 # ============================================================ MCP stdio server
 SERVER_INSTRUCTIONS = (
-    "Shared project memory. Before any task call start_task(task) and follow the returned context and "
-    "decisions. Use search_memory instead of guessing about project history. When finished call "
-    "finish_task(summary, decisions, facts, next_steps). Never store secrets."
+    "Shared project memory. Mandatory protocol for all agents:\n"
+    "1. Memory First: Before any task call start_task(task) and follow returned context, tasks, and decisions.\n"
+    "2. Vector-First Retrieval: Always use search_memory to retrieve targeted snippets (PDFs, docs, code) before reading full files, saving tokens and getting high quality answers.\n"
+    "3. Model Read/Write Authority: You have full authority to search, read, modify, and create rules and skills.\n"
+    "4. Task Completion: When finished call finish_task(summary, decisions, facts, next_steps).\n"
+    "5. Never store secrets."
 )
 
 
@@ -385,11 +400,13 @@ def instruction_block(project=None) -> str:
     return f"""{START}
 ## Shared project memory (MCP server `agent-memory`)
 
-{proj}1. **Before starting a task**, call `start_task` with a one-line description. Read the returned context, open tasks, recent decisions and relevant notes, and follow existing decisions unless the user says otherwise. Check project docs (`list_dir` / `read_file`, e.g. `docs/`) before assuming how things work.
-2. **While working**, call `search_memory` before guessing about project history or conventions.
-3. **When the task is done** (or the session is ending), call `finish_task` with a short summary, decisions made (with the reason), durable facts learned (commands, conventions, gotchas) and next steps. Keep entries short and factual.
-4. Never store secrets (tokens, passwords, keys) in memory.
-5. If the memory tools are unavailable, continue the task normally and tell the user.
+{proj}### Core Axioms & Protocol (VS Code, Antigravity/AGY, Cursor, Claude, Codex, Windsurf)
+1. **Memory First**: Call `start_task` with a one-line description before starting work. Read the returned context, open tasks, recent decisions, and relevant notes. Check project docs (`list_dir` / `read_file`, e.g. `docs/`) before assuming how things work.
+2. **Vector-First Retrieval (Low Token, Max Quality)**: **Always search vector chunks first** (`search_memory`) before reading entire files, PDFs, or images. Use the chunk's targeted citation and snippet to answer accurately while consuming 95% fewer tokens. Only read raw files if the chunk snippet is insufficient.
+3. **Model Read/Write Authority**: The AI model has full permission to search, read, modify, and create project rules and skills (`.agents/rules/`, `.agents/skills/`).
+4. **Task Completion**: When finished (or when session ends), call `finish_task` with a concise summary, decisions made (with reasons), durable facts learned (commands, conventions, gotchas), and next steps.
+5. **No Secrets**: Never store tokens, passwords, or keys in memory.
+6. **Graceful Fallback**: If the memory tools are unavailable, continue normally and inform the user.
 {END}
 """
 
@@ -560,7 +577,7 @@ def setup_antigravity(hooks=False):
     json_server(home() / ".gemini" / "config" / "mcp_config.json", True)
     upsert_block(home() / ".gemini" / "GEMINI.md", instruction_block())
     return ["MCP server added -> ~/.gemini/config/mcp_config.json (shared by agy CLI and IDE)",
-            "instructions -> ~/.gemini/GEMINI.md (also run `init` per repo to write AGENTS.md)"]
+            "instructions -> ~/.gemini/GEMINI.md (also run `init` per repo to write .agents/AGENTS.md)"]
 
 
 def remove_antigravity():
@@ -571,20 +588,104 @@ def remove_antigravity():
 def setup_cursor(hooks=False):
     json_server(home() / ".cursor" / "mcp.json", True)
     return ["MCP server added -> ~/.cursor/mcp.json",
-            "Cursor has no global rules file: run `init` per repo (writes AGENTS.md)"]
+            "Run `init` per repo to write AGENTS.md and .cursor/mcp.json"]
 
 
 def remove_cursor():
     json_server(home() / ".cursor" / "mcp.json", False)
 
 
+# ---- VS Code (Roo Code, Cline, Continue, GitHub Copilot)
+def code_user_dirs() -> list[Path]:
+    dirs = [
+        home() / ".config" / "Code" / "User",
+        home() / ".config" / "Code - Insiders" / "User",
+        home() / "Library" / "Application Support" / "Code" / "User",
+        home() / "Library" / "Application Support" / "Code - Insiders" / "User",
+    ]
+    if os.environ.get("APPDATA"):
+        dirs.extend([
+            Path(os.environ["APPDATA"]) / "Code" / "User",
+            Path(os.environ["APPDATA"]) / "Code - Insiders" / "User",
+        ])
+    return [d for d in dirs if d.parent.is_dir() or d.is_dir()]
+
+
+def setup_vscode(hooks=False):
+    out = []
+    configured_exts = []
+    # 1. Roo Code
+    for ud in code_user_dirs():
+        roo_dir = ud / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings"
+        roo_file = roo_dir / "cline_mcp_settings.json"
+        if roo_dir.is_dir() or roo_file.is_file():
+            json_server(roo_file, True)
+            configured_exts.append("Roo Code")
+    # 2. Cline
+    for ud in code_user_dirs():
+        cline_dir = ud / "globalStorage" / "saoudrizwan.claude-dev" / "settings"
+        cline_file = cline_dir / "cline_mcp_settings.json"
+        if cline_dir.is_dir() or cline_file.is_file():
+            json_server(cline_file, True)
+            configured_exts.append("Cline")
+    # 3. Continue.dev
+    continue_cfg = home() / ".continue" / "config.json"
+    if continue_cfg.is_file() or (home() / ".continue").is_dir():
+        try:
+            data = load_json(continue_cfg)
+            exp = data.setdefault("experimental", {})
+            mcp_list = exp.setdefault("modelContextProtocolServers", [])
+            has_it = any(x.get("transport", {}).get("args", []) == [str(installed_path()), "serve"] for x in mcp_list)
+            if not has_it:
+                mcp_list.append({
+                    "transport": {
+                        "type": "stdio",
+                        "command": PY,
+                        "args": [str(installed_path()), "serve"]
+                    }
+                })
+                save_json(continue_cfg, data)
+                configured_exts.append("Continue.dev")
+        except Exception as e:
+            out.append(f"Continue.dev warning: {e}")
+
+    if configured_exts:
+        out.append(f"Configured MCP for VS Code extensions: {', '.join(set(configured_exts))}")
+    out.append("VS Code workspace support enabled (run `init` in any repo to create .vscode/mcp.json)")
+    return out
+
+
+def remove_vscode():
+    for ud in code_user_dirs():
+        for sub in ("rooveterinaryinc.roo-cline", "saoudrizwan.claude-dev"):
+            mf = ud / "globalStorage" / sub / "settings" / "cline_mcp_settings.json"
+            if mf.is_file():
+                json_server(mf, False)
+
+
+# ---- Windsurf
+def setup_windsurf(hooks=False):
+    json_server(home() / ".codeium" / "windsurf" / "mcp_config.json", True)
+    return ["MCP server added -> ~/.codeium/windsurf/mcp_config.json",
+            "Run `init` per repo to write AGENTS.md"]
+
+
+def remove_windsurf():
+    json_server(home() / ".codeium" / "windsurf" / "mcp_config.json", False)
+
+
 AGENTS = {
+    "vscode":      ("VS Code (Roo/Cline/Continue/Copilot)",
+                    lambda: which_any("code", "code-insiders") or (home() / ".config" / "Code").is_dir() or (home() / ".vscode").is_dir(),
+                    setup_vscode, remove_vscode),
+    "antigravity": ("Antigravity (agy CLI + IDE)",
+                    lambda: which_any("agy", "antigravity") or (home() / ".gemini" / "config").is_dir() or (home() / ".gemini" / "antigravity").is_dir(),
+                    setup_antigravity, remove_antigravity),
+    "cursor":      ("Cursor", lambda: which_any("cursor") or (home() / ".cursor").is_dir(), setup_cursor, remove_cursor),
+    "windsurf":    ("Windsurf", lambda: which_any("windsurf") or (home() / ".codeium" / "windsurf").is_dir(), setup_windsurf, remove_windsurf),
     "claude":      ("Claude Code", lambda: which_any("claude") or (home() / ".claude").is_dir(), setup_claude, remove_claude),
     "codex":       ("Codex CLI", lambda: which_any("codex") or (home() / ".codex").is_dir(), setup_codex, remove_codex),
-    "gemini":      ("Gemini CLI", lambda: which_any("gemini"), setup_gemini, remove_gemini),
-    "antigravity": ("Antigravity (agy)", lambda: which_any("agy", "antigravity") or (home() / ".gemini" / "config").is_dir()
-                    or (home() / ".gemini" / "antigravity").is_dir(), setup_antigravity, remove_antigravity),
-    "cursor":      ("Cursor", lambda: which_any("cursor") or (home() / ".cursor").is_dir(), setup_cursor, remove_cursor),
+    "gemini":      ("Gemini CLI", lambda: which_any("gemini") or (home() / ".gemini").is_dir(), setup_gemini, remove_gemini),
 }
 
 
@@ -653,6 +754,23 @@ def cmd_init(a):
     (root / ".agentmem.json").write_text(json.dumps({"project": name}, indent=2) + "\n", "utf-8")
     print(f"[ok] project '{name}' {'created' if created else 'already exists'} on the server")
     print(f"[ok] wrote {root/'.agentmem.json'} (safe to commit; contains no secrets)")
+
+    # 1. VS Code workspace MCP (.vscode/mcp.json)
+    vscode_mcp = root / ".vscode" / "mcp.json"
+    json_server(vscode_mcp, True)
+    print(f"[ok] VS Code workspace MCP -> .vscode/mcp.json")
+
+    # 2. Cursor workspace MCP (.cursor/mcp.json)
+    cursor_mcp = root / ".cursor" / "mcp.json"
+    json_server(cursor_mcp, True)
+    print(f"[ok] Cursor workspace MCP -> .cursor/mcp.json")
+
+    # 3. Antigravity / AGY rules (.agents/AGENTS.md)
+    agents_dir = root / ".agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    upsert_block(agents_dir / "AGENTS.md", instruction_block(name))
+    print(f"[ok] Antigravity/AGY rules -> .agents/AGENTS.md")
+
     if not a.no_files:
         for fn in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
             upsert_block(root / fn, instruction_block(name))
@@ -671,17 +789,29 @@ def cmd_status(_a):
     except ApiError as e:
         print(f"connection  : FAILED - {e}")
     checks = {
+        "vscode": home() / ".config" / "Code",
+        "antigravity": home() / ".gemini" / "config" / "mcp_config.json",
+        "cursor": home() / ".cursor" / "mcp.json",
+        "windsurf": home() / ".codeium" / "windsurf" / "mcp_config.json",
         "claude": home() / ".claude" / "CLAUDE.md",
         "codex": home() / ".codex" / "config.toml",
         "gemini": home() / ".gemini" / "settings.json",
-        "antigravity": home() / ".gemini" / "config" / "mcp_config.json",
-        "cursor": home() / ".cursor" / "mcp.json",
     }
     for n, f in checks.items():
-        txt = f.read_text("utf-8") if f.exists() else ""
-        ok = ("agentmem" in txt) if n in ("claude", "codex") else ("agent-memory" in txt)
-        print(f"{AGENTS[n][0]:<18}: {'configured' if ok else 'not configured'}"
-              f"{'' if AGENTS[n][1]() else ' (agent not detected)'}")
+        if n == "vscode":
+            has_conf = any(
+                (ud / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json").is_file()
+                or (ud / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json").is_file()
+                or (Path.cwd() / ".vscode" / "mcp.json").is_file()
+                for ud in code_user_dirs()
+            ) or (home() / ".continue" / "config.json").is_file()
+            status_str = "configured" if has_conf else "available (run init for .vscode/mcp.json)"
+            print(f"{AGENTS[n][0]:<20}: {status_str}")
+        else:
+            txt = f.read_text("utf-8") if f.exists() else ""
+            ok = ("agentmem" in txt) if n in ("claude", "codex") else ("agent-memory" in txt)
+            print(f"{AGENTS[n][0]:<20}: {'configured' if ok else 'not configured'}"
+                  f"{'' if AGENTS[n][1]() else ' (agent not detected)'}")
     p, how = resolve_project()
     print(f"this folder : project '{p}' (from {how})")
 
