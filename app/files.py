@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -104,7 +105,7 @@ def create_project(name: str, template: str, agent: str) -> dict:
 
 
 # ---------- files ----------
-def write_file(project, rel, content, agent, expected_sha256=None, append=False) -> dict:
+def write_file(project, rel, content="", agent="", expected_sha256=None, append=False, content_b64=None) -> dict:
     root = _ensure_project(project)
     target = safe_path(root, rel)
     rel_norm = target.relative_to(root.resolve()).as_posix()
@@ -117,12 +118,21 @@ def write_file(project, rel, content, agent, expected_sha256=None, append=False)
         ).fetchone()
         if expected_sha256 and (row is None or row["sha256"] != expected_sha256):
             raise ConflictError("file changed since you read it (sha256 mismatch); re-read and retry")
-        if append and target.is_file():
-            data = target.read_bytes() + content.encode()
+
+        if content_b64 is not None:
+            incoming = base64.b64decode(content_b64)
+        elif isinstance(content, bytes):
+            incoming = content
         else:
-            data = content.encode()
+            incoming = (content or "").encode("utf-8")
+
+        if append and target.is_file():
+            data = target.read_bytes() + incoming
+        else:
+            data = incoming
+
         if len(data) > settings.max_file_bytes:
-            raise ValueError("file too large")
+            raise ValueError(f"file too large ({len(data)} > {settings.max_file_bytes} bytes)")
         new_hash = sha256(data)
         if row and row["sha256"] == new_hash:
             return {"path": rel_norm, "sha256": new_hash, "version": row["version"], "changed": False}
@@ -144,7 +154,7 @@ def write_file(project, rel, content, agent, expected_sha256=None, append=False)
     return {"path": rel_norm, "sha256": new_hash, "version": res["version"], "changed": True}
 
 
-def read_file(project, rel, rev=None) -> dict:
+def read_file(project, rel, rev=None, as_b64=False) -> dict:
     root = _ensure_project(project)
     target = safe_path(root, rel)
     rel_norm = target.relative_to(root.resolve()).as_posix()
@@ -154,17 +164,36 @@ def read_file(project, rel, rev=None) -> dict:
         r = _git(root, "show", f"{rev}:{rel_norm}", check=False)
         if r.returncode != 0:
             raise FileNotFoundError("file/revision not found")
-        return {"path": rel_norm, "content": r.stdout, "rev": rev}
+        return {"path": rel_norm, "content": r.stdout, "rev": rev, "is_binary": False}
     if not target.is_file():
         raise FileNotFoundError(f"no such file: {rel_norm}")
     data = target.read_bytes()
     if len(data) > settings.max_file_bytes:
         raise ValueError("file too large to read")
+
+    is_binary = False
+    text = None
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        raise ValueError("binary file")
-    return {"path": rel_norm, "content": text, "sha256": sha256(data)}
+        is_binary = True
+
+    if is_binary or as_b64:
+        return {
+            "path": rel_norm,
+            "is_binary": True,
+            "content_b64": base64.b64encode(data).decode("ascii"),
+            "size": len(data),
+            "sha256": sha256(data),
+        }
+
+    return {
+        "path": rel_norm,
+        "is_binary": False,
+        "content": text,
+        "size": len(data),
+        "sha256": sha256(data),
+    }
 
 
 def list_dir(project, rel="") -> dict:

@@ -15,11 +15,57 @@ TEXT_EXT = {
     ".toml", ".ini", ".cfg", ".html", ".css", ".sql", ".sh", ".csv", ".xml", ".go", ".rs",
     ".java", ".c", ".h", ".cpp", ".rb", ".php",
 }
+DOC_EXT = {".pdf"}
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".svg"}
+ALL_INDEXABLE = TEXT_EXT | DOC_EXT | IMAGE_EXT
+
+
+def extract_text_content(target_path: Path, rel: str) -> str:
+    ext = target_path.suffix.lower()
+    if ext in DOC_EXT:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(target_path))
+            pages = []
+            for idx, page in enumerate(reader.pages, start=1):
+                txt = (page.extract_text() or "").strip()
+                if txt:
+                    pages.append(f"[{rel} - Page {idx}]\n{txt}")
+            return "\n\n".join(pages)
+        except Exception as e:
+            log.warning("PDF extraction failed for %s: %s", rel, e)
+            return ""
+    elif ext in IMAGE_EXT:
+        try:
+            from PIL import Image
+            lines = [f"[Image: {rel}]"]
+            with Image.open(target_path) as img:
+                lines.append(f"Format: {img.format}, Dimensions: {img.width}x{img.height}, Mode: {img.mode}")
+                exif = img.getexif()
+                if exif:
+                    tags = [f"{k}: {str(v)[:60]}" for k, v in list(exif.items())[:10]]
+                    if tags:
+                        lines.append("EXIF: " + ", ".join(tags))
+            for sidecar in [target_path.with_name(target_path.name + ".txt"), target_path.with_name(target_path.name + ".md")]:
+                if sidecar.is_file():
+                    lines.append("Description: " + sidecar.read_text("utf-8", errors="replace")[:1000])
+                    break
+            return "\n".join(lines)
+        except Exception as e:
+            log.warning("Image extraction failed for %s: %s", rel, e)
+            return f"[Image: {rel}]"
+    else:
+        try:
+            return target_path.read_text("utf-8", errors="replace")
+        except Exception as e:
+            log.warning("Text read failed for %s: %s", rel, e)
+            return ""
 
 
 def index_file(project: str, rel: str):
     """Chunk + embed one file. Chunks whose hash didn't change keep their embedding."""
     root = project_root(project)
+    target = root / rel
     with db.pool.connection() as conn:
         f = conn.execute(
             "SELECT id, sha256, indexed_sha256 FROM files WHERE project=%s AND path=%s",
@@ -27,12 +73,13 @@ def index_file(project: str, rel: str):
         ).fetchone()
         if not f or f["indexed_sha256"] == f["sha256"]:
             return
-        if Path(rel).suffix.lower() not in TEXT_EXT:
+        ext = Path(rel).suffix.lower()
+        if ext not in ALL_INDEXABLE or not target.is_file():
             conn.execute("UPDATE files SET indexed_sha256=sha256 WHERE id=%s", (f["id"],))
             return
-        try:
-            text = (root / rel).read_text("utf-8")
-        except (OSError, UnicodeDecodeError):
+        text = extract_text_content(target, rel)
+        if not text.strip():
+            conn.execute("UPDATE files SET indexed_sha256=sha256 WHERE id=%s", (f["id"],))
             return
         existing = {
             r["sha256"]: r["embedding"]
@@ -96,6 +143,6 @@ def search(project: str, query: str, limit: int = 8) -> list[dict]:
     best = sorted(scores, key=scores.get, reverse=True)[:limit]
     return [
         {"path": key[0], "chunk": key[1], "score": round(scores[key], 4),
-         "text": info[key]["text"][:800], "mode": "hybrid" if qe else "keyword"}
+         "text": info[key]["text"][:600], "mode": "hybrid" if qe else "keyword"}
         for key in best
     ]

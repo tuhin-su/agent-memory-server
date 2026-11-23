@@ -98,21 +98,37 @@ GET  /projects/{p}/context   # full project context (memory + file list)
 GET  /projects/{p}/tree      # all files with size + version
 ```
 
-### Files
+### Files (Text, PDF, Images, Binary)
 ```bash
-GET    /projects/{p}/file?path=docs/README.md           # read
-PUT    /projects/{p}/file   body: {path, content, append?, expected_sha256?}  # write
+# Read file (auto-detects text vs binary)
+GET    /projects/{p}/file?path=docs/README.md
+
+# Write text/markdown/code
+PUT    /projects/{p}/file
+body: {"path": "docs/architecture.md", "content": "# Architecture..."}
+
+# Write binary (PDF, images, spreadsheets) via base64
+PUT    /projects/{p}/file
+body: {"path": "docs/manual.pdf", "content_b64": "<base64-string>"}
+
 DELETE /projects/{p}/file?path=...                      # delete
 POST   /projects/{p}/move   body: {src, dst}            # move/rename
 GET    /projects/{p}/history?path=...                   # git log for file
 ```
 
-### Search (Hybrid Vector + Keyword)
+### Search (Vector-First Protocol: Low Token, High Quality)
 ```bash
 POST /projects/{p}/search
-body: {"query": "what did we decide about auth?", "limit": 8}
+body: {"query": "invoice total amount", "limit": 5}
 ```
-Returns chunks with `path`, `chunk` index, `score`, `text`, `mode` (hybrid|keyword).
+Returns top ranked chunks:
+- `path`: target file (e.g. `docs/manual.pdf` or `docs/spec.md`)
+- `chunk`: chunk index
+- `score`: similarity score
+- `text`: concise excerpt (e.g. `[docs/manual.pdf - Page 3] Total: $4,500`)
+- `mode`: `hybrid` or `keyword`
+
+**Always search first**: Evaluate chunk text to answer user queries with minimal token usage. Only read the full raw file if the chunk is insufficient.
 
 ### Save Memory
 ```bash

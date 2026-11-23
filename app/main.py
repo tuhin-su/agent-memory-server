@@ -67,7 +67,8 @@ class NewProject(BaseModel):
 
 class WriteBody(BaseModel):
     path: str
-    content: str
+    content: str = ""
+    content_b64: str | None = None
     expected_sha256: str | None = None
     append: bool = False
 
@@ -132,15 +133,23 @@ def list_dir(project: str, path: str = "", agent: auth.Agent = Depends(agent_dep
 
 
 @app.get("/projects/{project}/file")
-def read_file(project: str, path: str, rev: str | None = None, agent: auth.Agent = Depends(agent_dep)):
+def read_file(project: str, path: str, rev: str | None = None, as_b64: bool = False, agent: auth.Agent = Depends(agent_dep)):
     auth.require(agent, project, "read")
-    return files.read_file(project, path, rev)
+    return files.read_file(project, path, rev, as_b64=as_b64)
 
 
 @app.put("/projects/{project}/file")
 def write_file(project: str, body: WriteBody, bg: BackgroundTasks, agent: auth.Agent = Depends(agent_dep)):
     auth.require(agent, project, "write")
-    res = files.write_file(project, body.path, body.content, agent.name, body.expected_sha256, body.append)
+    res = files.write_file(
+        project,
+        body.path,
+        body.content,
+        agent.name,
+        expected_sha256=body.expected_sha256,
+        append=body.append,
+        content_b64=body.content_b64,
+    )
     if res["changed"]:
         bg.add_task(indexer.index_file, project, res["path"])
     return res

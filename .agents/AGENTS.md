@@ -1,63 +1,29 @@
-# Memory Server Project Rules
+# Agent Memory Server — Modular Rules System
 
-These rules apply to ALL agents working in this repository. Read and follow them every session.
+Welcome agent. Rules in this repository are **modularized** across `.agents/rules/`. Do not assume or guess: search, inspect, and apply the specific rule matching your task.
 
-## 1. Always Use Agent Memory MCP First
+## 🧭 Core Axioms (Read First)
 
-Before starting ANY task:
-- Call `start_task` on the `agent-memory` MCP server with a one-line description.
-- Read the returned `context`, `open_tasks`, `recent_decisions`, and `relevant_notes`.
-- When done, call `finish_task` with a summary, decisions made, and next steps.
+1. **Memory First**: Always execute `start_task` on `agent-memory` before starting, and `finish_task` before ending.
+2. **Vector First (Low Token, Max Quality)**: **Always search vector chunks first** (`search_memory` or `POST /search`) before reading entire files, PDFs, or images. Never load 50-page documents blindly into context. Use the chunk's page citation and targeted snippet to answer accurately while consuming 95% fewer tokens.
+3. **Model Read/Write Authority**: You (the AI model) have full authority to search, read, modify, and create any rule in `.agents/rules/` and any skill in `.agents/skills/`. Keep them up to date as the project evolves.
 
-## 2. Docker: Rebuild on Code Changes
+---
 
-> [!CAUTION]
-> `docker compose restart` does NOT reload code. The app is baked into the image.
+## 📂 Modular Rule Directory (`.agents/rules/`)
 
-**Always use this after editing anything in `app/`:**
-```bash
-docker compose up -d --build api
-```
+| Rule File | Scope & Topic |
+|---|---|
+| [01-memory-protocol.md](file:///home/nic/Downloads/memory-server/.agents/rules/01-memory-protocol.md) | Task lifecycle, start/finish protocol, context checking |
+| [02-vector-first-retrieval.md](file:///home/nic/Downloads/memory-server/.agents/rules/02-vector-first-retrieval.md) | Token-efficient vector search protocol before file access |
+| [03-model-rw-rules-skills.md](file:///home/nic/Downloads/memory-server/.agents/rules/03-model-rw-rules-skills.md) | Model permissions to read, write, and update rules & skills |
+| [04-docker-lifecycle.md](file:///home/nic/Downloads/memory-server/.agents/rules/04-docker-lifecycle.md) | Mandatory `docker compose up -d --build api`, CORS checks |
+| [05-multi-modal-storage.md](file:///home/nic/Downloads/memory-server/.agents/rules/05-multi-modal-storage.md) | Storing and indexing PDFs, images, code, and text via base64 |
+| [06-security-and-advisory-locks.md](file:///home/nic/Downloads/memory-server/.agents/rules/06-security-and-advisory-locks.md) | Path safety, `.env` security, 32-bit advisory lock collision risk |
 
-## 3. Verify CORS After Rebuild
+---
 
-After rebuilding, confirm CORS headers are live:
-```bash
-curl -si http://localhost:8080/health -H "Origin: http://localhost:5055" | grep access-control
-# Must return: access-control-allow-origin: *
-```
+## 🛠 Skills & Runbooks
 
-## 4. Memory UI is a Separate App
-
-- The web dashboard lives in `memory-ui/` — it is NOT part of the FastAPI server.
-- Start it manually: `./memory-ui/start.sh` → opens at http://localhost:5055
-- Stop it: `./memory-ui/stop.sh`
-- Do NOT auto-start the UI from docker-compose.
-
-## 5. Env Vars Control Everything
-
-All runtime config lives in `.env`. Key vars:
-| Var | Default | Purpose |
-|-----|---------|---------|
-| `API_HOST` | `0.0.0.0` | Uvicorn bind host |
-| `API_PORT` | `8080` | Uvicorn bind port |
-| `ADMIN_TOKEN` | *(required)* | Superuser token |
-| `EMBED_PROVIDER` | `ollama` | `ollama` or `none` |
-| `EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
-| `EMBED_DIM` | `768` | Must match model output dim |
-
-After editing `.env` → always rebuild: `docker compose up -d --build api`
-
-## 6. Never Commit `.env`
-
-`.env` contains secrets. It is gitignored. Only commit `.env.example`.
-
-## 7. Path Safety Rules
-
-All file paths go through `security.safe_path()`. Never bypass it.
-- No absolute paths, no `..`, no access to `.git/` or `.meta/`
-- Project names: lowercase, `a-z 0-9 . _ -` only
-
-## 8. Advisory Lock Hash Collision Risk
-
-`pg_advisory_xact_lock(hashtext(...))` uses a **32-bit hash** — collision risk grows above ~65k files. If the project scales beyond that, migrate to `pg_advisory_xact_lock(bigint, bigint)` with two separate hash components.
+- **Memory Server Runbook**: [.agents/skills/memory-server/SKILL.md](file:///home/nic/Downloads/memory-server/.agents/skills/memory-server/SKILL.md)
+- **Production Scaling Analysis**: [.agents/skills/memory-server/references/production-issues.md](file:///home/nic/Downloads/memory-server/.agents/skills/memory-server/references/production-issues.md)
