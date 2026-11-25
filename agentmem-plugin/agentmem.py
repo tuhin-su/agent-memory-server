@@ -4,9 +4,10 @@
 Pure standard library (Python 3.9+), no pip install needed.
 
   python3 agentmem.py install            # configure all detected agents (Claude Code, Codex, Gemini CLI, Antigravity, Cursor)
+  python3 agentmem.py install --remove   # remove plugin from all agents and delete ~/.agentmem
   python3 ~/.agentmem/agentmem.py init   # run inside a repo: bind it to a memory project + write AGENTS.md/CLAUDE.md/GEMINI.md
   python3 ~/.agentmem/agentmem.py status
-  python3 ~/.agentmem/agentmem.py uninstall
+  python3 ~/.agentmem/agentmem.py uninstall [--purge]
 
 Agents then talk to it as an MCP server (`agentmem.py serve`) and follow a simple protocol:
 start_task -> work -> finish_task.
@@ -582,6 +583,7 @@ def setup_antigravity(hooks=False):
 
 def remove_antigravity():
     json_server(home() / ".gemini" / "config" / "mcp_config.json", False)
+    remove_block(home() / ".gemini" / "GEMINI.md")
 
 
 # ---- Cursor
@@ -661,6 +663,16 @@ def remove_vscode():
             mf = ud / "globalStorage" / sub / "settings" / "cline_mcp_settings.json"
             if mf.is_file():
                 json_server(mf, False)
+    continue_cfg = home() / ".continue" / "config.json"
+    if continue_cfg.is_file():
+        data = load_json(continue_cfg)
+        mcp_list = data.get("experimental", {}).get("modelContextProtocolServers")
+        if isinstance(mcp_list, list):
+            filtered = [x for x in mcp_list
+                        if "agentmem.py" not in " ".join(str(a) for a in x.get("transport", {}).get("args", []))]
+            if len(filtered) != len(mcp_list):
+                data["experimental"]["modelContextProtocolServers"] = filtered
+                save_json(continue_cfg, data)
 
 
 # ---- Windsurf
@@ -691,6 +703,9 @@ AGENTS = {
 
 # ============================================================ CLI commands
 def cmd_install(a):
+    if a.remove:
+        cmd_uninstall(argparse.Namespace(purge=True))
+        return
     cfg = load_config()
     url = a.url or cfg.get("url") or (input("Memory server URL [http://localhost:8080]: ").strip() or "http://localhost:8080")
     token = a.token or cfg.get("token") or getpass.getpass("Agent token: ").strip()
@@ -853,12 +868,14 @@ def cmd_save(a):
 
 def main():
     ap = argparse.ArgumentParser(prog="agentmem", description=__doc__.split("\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    ap.add_argument("--remove", action="store_true", help="remove this plugin from all agents and delete ~/.agentmem")
+    sub = ap.add_subparsers(dest="cmd", required=False)
     s = sub.add_parser("install", help="configure agents + store server URL/token")
     s.add_argument("--url"); s.add_argument("--token")
     s.add_argument("--agents", default="auto", help="auto | all | claude,codex,gemini,antigravity,cursor")
     s.add_argument("--hooks", action="store_true", help="Claude Code: auto-inject context at session start")
     s.add_argument("--skip-verify", action="store_true")
+    s.add_argument("--remove", action="store_true", help="remove this plugin from all agents and delete ~/.agentmem")
     s.set_defaults(fn=cmd_install)
     s = sub.add_parser("uninstall"); s.add_argument("--purge", action="store_true", help="also delete ~/.agentmem")
     s.set_defaults(fn=cmd_uninstall)
@@ -874,6 +891,11 @@ def main():
     s = sub.add_parser("save"); s.add_argument("type"); s.add_argument("text"); s.add_argument("--project")
     s.set_defaults(fn=cmd_save)
     a = ap.parse_args()
+    if a.remove:
+        cmd_uninstall(argparse.Namespace(purge=True))
+        return
+    if not a.cmd:
+        ap.error("the following arguments are required: cmd")
     try:
         a.fn(a)
     except ApiError as e:

@@ -9,6 +9,7 @@ python3 agentmem.py install --url http://YOUR-SERVER:8080 --token <agent-token>
 #   --agents all                 configure every supported agent and IDE
 #   --agents vscode,antigravity  pick specific agents/IDEs
 #   --hooks                      Claude Code: auto-inject project context at session start
+#   --remove                     remove this plugin from all agents and delete ~/.agentmem
 ```
 
 ### Supported Agents & IDEs:
@@ -91,6 +92,7 @@ python3 ~/.agentmem/agentmem.py search "auth decision"
 # Save a quick fact or decision
 python3 ~/.agentmem/agentmem.py save fact "DB pool is max 10"
 
-# Uninstall
+# Uninstall / remove from system
+python3 agentmem.py install --remove
 python3 ~/.agentmem/agentmem.py uninstall [--purge]
 ```
