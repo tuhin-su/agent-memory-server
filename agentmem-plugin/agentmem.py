@@ -19,6 +19,7 @@ import getpass
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,11 @@ import urllib.request
 from pathlib import Path
 
 VERSION = "0.1.0"
-PY = sys.executable or "python3"
+PY = sys.executable or ("python" if os.name == "nt" else "python3")
+
+
+def _fmt_cmd(cmd: list[str]) -> str:
+    return subprocess.list2cmdline(cmd) if os.name == "nt" else shlex.join(cmd)
 
 
 def home() -> Path:
@@ -115,7 +120,7 @@ def slugify(s: str) -> str:
 def git_root(start: Path):
     try:
         r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=start,
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -143,7 +148,7 @@ def resolve_project(explicit=None):
     cwd = Path.cwd()
     p, d = find_binding(cwd)
     if p:
-        return p, f"{d}/.agentmem.json"
+        return p, str(d / ".agentmem.json")
     root = git_root(cwd) or cwd
     return slugify(root.name), f"folder name ({root})"
 
@@ -380,6 +385,10 @@ def _handle(msg):
 
 
 def cmd_serve(_a):
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -504,11 +513,11 @@ def setup_claude(hooks=False):
            PY, str(installed_path()), "serve"]
     if claude:
         subprocess.run([claude, "mcp", "remove", "agent-memory", "--scope", "user"], capture_output=True)
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         out.append("MCP server added (user scope)" if r.returncode == 0
-                   else f"could not run `claude mcp add` ({r.stderr.strip()[:120]}). Run manually:\n    " + " ".join(cmd))
+                   else f"could not run `claude mcp add` ({r.stderr.strip()[:120]}). Run manually:\n    " + _fmt_cmd(cmd))
     else:
-        out.append("`claude` not on PATH. Run manually:\n    " + " ".join(cmd))
+        out.append("`claude` not on PATH. Run manually:\n    " + _fmt_cmd(cmd))
     upsert_block(home() / ".claude" / "CLAUDE.md", instruction_block())
     out.append("global instructions -> ~/.claude/CLAUDE.md")
     if hooks:
@@ -688,7 +697,7 @@ def remove_windsurf():
 
 AGENTS = {
     "vscode":      ("VS Code (Roo/Cline/Continue/Copilot)",
-                    lambda: which_any("code", "code-insiders") or (home() / ".config" / "Code").is_dir() or (home() / ".vscode").is_dir(),
+                    lambda: which_any("code", "code-insiders") or bool(code_user_dirs()) or (home() / ".vscode").is_dir(),
                     setup_vscode, remove_vscode),
     "antigravity": ("Antigravity (agy CLI + IDE)",
                     lambda: which_any("agy", "antigravity") or (home() / ".gemini" / "config").is_dir() or (home() / ".gemini" / "antigravity").is_dir(),
@@ -721,9 +730,13 @@ def cmd_install(a):
     src = Path(__file__).resolve()
     if src != installed_path().resolve():
         shutil.copy2(src, installed_path())
-    os.chmod(installed_path(), 0o755)
+    try:
+        os.chmod(installed_path(), 0o755)
+    except OSError:
+        pass
     save_config(url, token)
-    print(f"[ok] plugin installed at {installed_path()} (token stored in {app_dir()/'config.json'}, mode 600)")
+    mode_note = "" if os.name == "nt" else ", mode 600"
+    print(f"[ok] plugin installed at {installed_path()} (token stored in {app_dir()/'config.json'}{mode_note})")
 
     if a.agents == "auto":
         names = [n for n, (_, det, _, _) in AGENTS.items() if det()]
@@ -745,7 +758,7 @@ def cmd_install(a):
         except Exception as e:  # noqa: BLE001
             print(f"  [!] failed: {e}")
     print("\nNext: restart your agents, then in each repo run:\n"
-          f"  {PY} {installed_path()} init")
+          f"  {_fmt_cmd([PY, str(installed_path()), 'init'])}")
 
 
 def cmd_uninstall(a):
@@ -756,8 +769,11 @@ def cmd_uninstall(a):
         except Exception as e:  # noqa: BLE001
             print(f"[!] {label}: {e}")
     if a.purge and app_dir().exists():
-        shutil.rmtree(app_dir())
-        print(f"[ok] deleted {app_dir()}")
+        try:
+            shutil.rmtree(app_dir())
+            print(f"[ok] deleted {app_dir()}")
+        except OSError as e:
+            print(f"[!] could not delete {app_dir()}: {e} (close any running IDE/agent and delete it manually)")
 
 
 def cmd_init(a):
@@ -867,6 +883,12 @@ def cmd_save(a):
 
 
 def main():
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
     ap = argparse.ArgumentParser(prog="agentmem", description=__doc__.split("\n")[0])
     ap.add_argument("--remove", action="store_true", help="remove this plugin from all agents and delete ~/.agentmem")
     sub = ap.add_subparsers(dest="cmd", required=False)

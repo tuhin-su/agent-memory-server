@@ -4,6 +4,8 @@ Connects **VS Code** (Copilot, Roo Code, Cline, Continue), **Antigravity (agy CL
 
 ## 🚀 Install (once per machine)
 
+Works on **Linux, macOS, and Windows** (on Windows, use `python` instead of `python3` and `%USERPROFILE%\.agentmem\agentmem.py` instead of `~/.agentmem/agentmem.py`).
+
 ```bash
 python3 agentmem.py install --url http://YOUR-SERVER:8080 --token <agent-token>
 #   --agents all                 configure every supported agent and IDE
